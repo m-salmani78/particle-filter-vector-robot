@@ -1,15 +1,16 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 import rospy
 from sensor_msgs.msg import Range
 from nav_msgs.msg import Odometry
 from tf.transformations import euler_from_quaternion
 from geometry_msgs.msg import Twist
-import map
 import numpy as np
 from math import *
 from os.path import expanduser
 import matplotlib.pyplot as plt
 import scipy
+
+from map import Map
 
 
 ## Constants and parameters:
@@ -35,23 +36,38 @@ rotation_list = [ PI/2 , 3*(PI/2) , 0 , PI ]
 
 home = expanduser("~")
 map_address = home + '/catkin_ws/src/anki_description/world/sample1.world'
-rects,global_map_pose,map_boundry = map.init_map(map_address)
-x_min , x_max , y_min , y_max = map_boundry
-x0 , y0 = float(global_map_pose[0]) , float(global_map_pose[1])
-all_map_lines = map.convert_point_to_line(rects)
+map = Map(map_address)
+x_min , x_max , y_min , y_max = map.map_boundry
 
-rects = map.add_offset(rects,[x0 , y0])
-all_map_lines = map.convert_point_to_line(rects)
-polygan = map.convert_to_poly(rects)
+# Noises
+sensor_model_noise = {
+    0: {"mean": 0.0, "std": 0.001},
+    5: {"mean": 0.004736, "std": 0.035173},
+    10: {"mean": 0.006546, "std": 0.022644},
+    20: {"mean": 0.011082, "std": 0.040112},
+    30: {"mean": 0.012548, "std": 0.093023},
+    37: {"mean": 0.000918, "std": 0.188409},
+}
 
+translation_model_params = {
+    0: {"mean": 0.0, "std": 0.0, "dt":0.0},
+    5: {"mean": -0.008467, "std": 0.000806713, "dt":0.1},
+    10: {"mean": -0.009100, "std": 0.000571276, "dt":0.2},
+    15: {"mean": -0.008634, "std": 0.000658264, "dt":0.3},
+}
 
+rotation_model_params = {
+    0: {"mean": 0.0, "std": 0.0, "dt":0.0},
+    90: {"mean": 0.564, "std": 0.0014, "dt":PI/2},
+    -90: {"mean": -0.577, "std": 0.0012, "dt":-PI/2},
+}
 
 # Functions:
 def callback_laser(msg):
     global laser
     laser= msg.range
 
-def new_odometry(msg):
+def new_odometry(msg: Odometry):
     global x
     global y
     global theta
@@ -63,26 +79,25 @@ def new_odometry(msg):
     (roll, pitch, theta) = euler_from_quaternion([rot_q.x, rot_q.y, rot_q.z, rot_q.w])
 
 
-def motion_model(prtcl_weight, v , w, dt , v_var = v_var , w_var = w_var , g_var = g_var ,  map=map , polygan=polygan , x0=x0 ,y0=y0 , map_boundry=map_boundry):
+def motion_model(prtcl_weight, v, w, dt, v_noise=translation_model_params[0], w_noise=rotation_model_params[0], g_var=g_var):
 
     for i in range(prtcl_weight.shape[0]):
-
-        v_hat = v + np.random.normal(0, v_var)
-        w_hat = w + np.random.normal(0, w_var)
+        v_hat = v + np.random.normal(v_noise["mean"], v_noise["std"])
+        w_hat = w + np.random.normal(w_noise["mean"], w_noise["std"])
         if w_hat==0:
             w_hat=1e-9
-        g_hat = np.random.normal(0, g_var  )
+        g_hat = np.random.normal(0, g_var)
 
-        prtcl_weight[:,0][i] = prtcl_weight[:,0][i] + (v_hat/w_hat)* ( - sin(prtcl_weight[:,2][i]) +sin(prtcl_weight[:,2][i]+ w_hat*dt) ) 
+        prtcl_weight[:,0][i] = prtcl_weight[:,0][i] + (v_hat/w_hat)* ( - sin(prtcl_weight[:,2][i]) + sin(prtcl_weight[:,2][i]+ w_hat*dt) ) 
 
-        prtcl_weight[:,1][i] = prtcl_weight[:,1][i] + (v_hat/w_hat)* (   cos(prtcl_weight[:,2][i]) -cos(prtcl_weight[:,2][i]+ w_hat*dt) )
+        prtcl_weight[:,1][i] = prtcl_weight[:,1][i] + (v_hat/w_hat)* (   cos(prtcl_weight[:,2][i]) - cos(prtcl_weight[:,2][i]+ w_hat*dt) )
 
         prtcl_weight[:,2][i] = prtcl_weight[:,2][i]+ dt * (w_hat + g_hat) + 10*PI
         prtcl_weight[:,2][i] = prtcl_weight[:,2][i] - int(prtcl_weight[:,2][i]/(2*PI))*2*PI
    
     return prtcl_weight
 
-def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map , all_map_lines = all_map_lines ) :
+def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map) :
     max_laser = 0.435 #35 2
     sensor_var = laser_var
     print(prtcl_weight.shape)
@@ -95,7 +110,7 @@ def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map , all_
         prtcl_end =   [ prtcl_weight[:,0][i] + max_laser*cos(prtcl_weight[:,2][i])  , prtcl_weight[:,1][i] + max_laser*sin(prtcl_weight[:,2][i])]
         min_distance=10
         col = False
-        for line in all_map_lines:
+        for line in map.all_map_lines:
             intersection_point = map.find_intersection(line[0], line[1] , prtcl_start, prtcl_end)
             if intersection_point != False:
                 d_laser = ((intersection_point[0]-prtcl_weight[:,0][i] )**2 + (intersection_point[1]-prtcl_weight[:,1][i] )**2  )**0.5
@@ -103,7 +118,7 @@ def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map , all_
                     min_distance=d_laser
                     col=intersection_point
             
-        if col == False:
+        if not col:
             min_distance=max_laser
         
         d_laser = min_distance
@@ -120,23 +135,23 @@ def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map , all_
 
 
 
-def col_oor_handler (prtcl_weight, polygan=polygan , x_min=x_min , x_max=x_max , y_min = y_min , y_max= y_max , x0=x0 , y0=y0 ,map_boundry = map_boundry , delete= False):
+def col_oor_handler (prtcl_weight, x_min=x_min , x_max=x_max , y_min = y_min , y_max= y_max, map=map , delete= False):
     out=0
     delete_list=[]
     x_list = np.arange(x_min , x_max , 0.02)
     y_list = np.arange(y_min , y_max , 0.02)
     for i in range(prtcl_weight.shape[0]):
 
-        if map.check_is_collition([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ]  , polygan) or map.out_of_range([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ],[x0 , y0],map_boundry):
+        if map.check_is_collition([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ]) or map.out_of_range([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ],[map.x0 , map.y0]):
             out = out+1
             if delete :
                 delete_list.append(i)
 
             else:
 
-                while map.check_is_collition([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ]  , polygan) or map.out_of_range([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ],[x0 , y0],map_boundry):
-                    prtcl_weight[:,0][i] = np.round(np.random.choice(x_list) + x0,2)
-                    prtcl_weight[:,1][i]  = np.round(np.random.choice(y_list)+ y0 , 2)
+                while map.check_is_collition([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ]) or map.out_of_range([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ],[map.x0 , map.y0]):
+                    prtcl_weight[:,0][i] = np.round(np.random.choice(x_list) + map.x0,2)
+                    prtcl_weight[:,1][i]  = np.round(np.random.choice(y_list)+ map.y0 , 2)
 
     
     if delete:
@@ -147,7 +162,7 @@ def col_oor_handler (prtcl_weight, polygan=polygan , x_min=x_min , x_max=x_max ,
 
 
 
-def generate_prticles(x_min=x_min , x_max=x_max , x0=x0 , y_min=y_min , y_max=y_max , y0=y0 , rotation_list=rotation_list,  num_prtcls=num_prticles , w=0):
+def generate_prticles(x_min=x_min , x_max=x_max , x0=map.x0 , y_min=y_min , y_max=y_max , y0=map.y0 , rotation_list=rotation_list,  num_prtcls=num_prticles , w=0):
     x_list = np.arange(x_min , x_max , 0.02)
     y_list = np.arange(y_min , y_max , 0.02)
     prtcl_x = (np.random.choice(x_list , num_prtcls) + x0).reshape(-1,1) 
@@ -157,20 +172,34 @@ def generate_prticles(x_min=x_min , x_max=x_max , x0=x0 , y_min=y_min , y_max=y_
     prtcl_weight = np.concatenate([prtcl_x,prtcl_y,prtcl_theta , weights],axis=1)
     return prtcl_weight 
 
-def plotter(prtcl_weight ,x_val , y_val , theta_val, map = map , all_map_lines = all_map_lines ):
+def plotter(prtcl_weight, x_val, y_val, theta_val, map=map, max_laser=0.04):
     plt.clf()
     plt.gca().invert_yaxis()
-    map.plot_map(all_map_lines)
-    valid_intsc=False
-    max_laser=0.4
-    index = np.argsort(-prtcl_weight[:,3])[:int(prtcl_weight.shape[0]*1)]
-    prtcl_weight = prtcl_weight[:,:][index]
+    map.plot_map()
+
     # True position of the robot :
-    plt.arrow ( y_val , x_val , 1e-5*sin(theta_val) , 1e-5*cos(theta_val), color = 'yellow' , head_width = 0.02, overhang = 0.6)
+    plt.arrow(y_val, x_val, 1e-5*sin(theta_val), 1e-5*cos(theta_val), color='yellow', head_width=0.02, overhang=0.6)
     circle1 = plt.Circle((y_val, x_val), 0.05, color='r')
     plt.gca().add_patch(circle1)
+    
+    # Normalize weights for plotting
+    max_weight = np.max(prtcl_weight[:, 3])
+    norm_weights = prtcl_weight[:, 3] / max_weight
+    
     for i in range(prtcl_weight.shape[0]):
-        plt.arrow(prtcl_weight[:,1][i] , prtcl_weight[:,0][i] , 1e-5*sin(prtcl_weight[:,2][i]) , 1e-5*cos(prtcl_weight[:,2][i]) , color='black' , head_width = 0.02, overhang = 0.6)
+        x = prtcl_weight[i, 0]
+        y = prtcl_weight[i, 1]
+        theta = prtcl_weight[i, 2]
+        weight = norm_weights[i]
+        
+        # Plot particle as a blue circle
+        plt.plot(y, x, 'bo', alpha=weight)
+        
+        # Plot line indicating laser range
+        end_x = x + max_laser * cos(theta)
+        end_y = y + max_laser * sin(theta)
+        plt.plot([y, end_y], [x, end_x], 'b-', alpha=weight)
+    
     plt.draw()
     plt.pause(0.1)
         
@@ -185,7 +214,7 @@ velocity_publisher = rospy.Publisher('/vector/cmd_vel', Twist, queue_size=1)
 laser_reader = rospy.Subscriber('/vector/laser', Range, callback_laser, queue_size = 1)
 vel_msg = Twist()
 
-# initial particles from a uniform distribution:
+# initial particle generation
 X_W = generate_prticles()
 
 X_W , num_out = col_oor_handler(X_W)
@@ -210,29 +239,32 @@ while not rospy.is_shutdown():
 
     key=input()
 
-    print(key)
-
-    if key in ['w','ww','s','ss']:
-        angle=0
+    if key in ['w','ww','www']:
+        angle = rotation_model_params[0]
         if key == 'w' :
-            dist=0.1
+            distance = translation_model_params[5]
         elif key == 'ww':
-            dist = 0.2
-        elif key == 's':
-            dist = -0.1
-        elif key == 'ss':
-            dist = -0.2
+            distance = translation_model_params[10]
+        elif key == 'www':
+            distance = translation_model_params[15]
+        # elif key == 's':
+        #     distance = -0.1
+        # elif key == 'ss':
+        #     distance = -0.2
     
-    elif key in ['a','aa' , 'd' , 'dd']:
-        dist=0
+    elif key in ['a', 'd']:
+        distance = translation_model_params[0]
         if key=='a':
-            angle= PI/2
-        elif key == 'aa' :
-            angle = PI   
+            angle= rotation_model_params[90]
+        # elif key == 'aa' :
+        #     angle = PI   
         elif key == 'd' :
-            angle = -PI/2
-        elif key == 'dd' :
-            angle = -PI
+            angle = rotation_model_params[-90]
+        # elif key == 'dd' :
+        #     angle = -PI
+    
+    elif key == 'q':
+        break
 
 
     t0 = rospy.Time.now().to_sec()
@@ -240,9 +272,9 @@ while not rospy.is_shutdown():
         t0 = rospy.Time.now().to_sec()
 
     dt=0
-    speed_t = (dist/desired_time)
+    speed_t = (distance["dt"] /desired_time)
     velocity_x = speed_t
-    speed_r=(angle/desired_time)
+    speed_r=(angle["dt"] /desired_time)
     velocity_z = speed_r
     laser_reading = laser
     laser_reading1 = laser
@@ -257,7 +289,7 @@ while not rospy.is_shutdown():
             dt=t1-t0
             update=True
             move=True
-        elif (laser_reading<=0.04) and ((dist<0) or (angle!=0) ):
+        elif (laser_reading<=0.04) and (angle["dt"]!=0):
             vel_msg.linear.x = velocity_x
             vel_msg.angular.z=velocity_z *2 ## double velocity due to the simulation bug
             velocity_publisher.publish(vel_msg)
@@ -280,7 +312,7 @@ while not rospy.is_shutdown():
 
         # update particles : x(t) = p (x(t-1) , u(t))
 
-        X_W = motion_model(X_W , v = speed_t , w = speed_r , dt = dt)
+        X_W = motion_model(X_W , v = speed_t , w = speed_r , dt = dt, v_noise=distance, w_noise=angle)
 
         X_W , num_out = col_oor_handler(X_W , delete=True) ## assigning zero weight to collison and out of range (x y theta)s
 
@@ -356,7 +388,7 @@ while not rospy.is_shutdown():
     
     
     g = 0
-    if portion >80:
+    if portion > 80:
         plt.figure()
         plt.plot(list_portion)
         plt.title( "Portion of Close Particles")
