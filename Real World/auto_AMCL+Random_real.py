@@ -14,12 +14,35 @@ from sklearn.cluster import DBSCAN
 
 PI = 3.1415926535897
 ## Constants and parameters :
-num_prtcls = 3000
+num_prtcls = 1000
 
-laser_var = (6.2)**0.5/1000
-v_var = 2*(0.04834)**0.5/100
-w_var = 2*0.3*(1.7283)**0.5*PI/180
+laser_var = 0.023
+v_var = 0.01480618
+w_var = 4.718756898
 g_var = 2*(0.01349) / 100
+
+
+distance_sensor_model = {
+    0: {"mean": 0.0, "std": 0.01},
+    5: {"mean": -0.0011, "std": 0.033},
+    10: {"mean": 0.0001, "std": 0.023},
+    20: {"mean": -0.0013, "std": 0.074},
+    30: {"mean": -0.0148, "std": 0.092},
+    37: {"mean": -0.0213, "std": 0.138},
+}
+
+translation_model = {
+    0.0: {"mean": 0.0, "std": 0.0},
+    1.0: {"mean": 0.00847, "std": 0.01480618},
+    2.0: {"mean": 0.00266667, "std": 0.0711644},
+    3.0: {"mean": 0.0016, "std": 0.0722406},
+}
+
+rotation_model = {
+    0: {"mean": 0.0, "std": 0.0},
+    90: {"mean": 85.6, "std": 4.718756898},
+    -90: {"mean": -84.6, "std": 5.966573556},
+}
 
 
 x = 0.0
@@ -36,7 +59,7 @@ desired_time=5 # dt is fixed but we calculate speed
 rotation_list = [ PI/2 , 3*(PI/2) , 0 , PI ]
 
 home = expanduser("~")
-map_address = home + '/catkin_ws/src/rob/src/mapworld.xlsx'
+map_address = home + "/catkin_ws/src/Vector-Robot-Localization/Real World/mapworld.xlsx"
 rects,global_map_pose,map_boundry = map.init_map(map_address)
 x_min , x_max , y_min , y_max = map_boundry
 x0 , y0 = float(global_map_pose[0]) , float(global_map_pose[1])
@@ -64,14 +87,14 @@ def motion_model(prtcl_weight, v , w, dt , v_var = v_var , w_var = w_var , g_var
         w_err=0
 
         if v>0:
-            v_err=0.012/dt 
+            v_err=0.00847/dt 
         elif v<0:
-            v_err=-0.012/dt 
+            v_err=0.00847/dt 
 
         if w>0:
-            w_err = 2*(2.3 * PI/180) / dt
+            w_err = (4.4 * PI/180) / dt
         elif w<0:
-            w_err = -2*(2.3 * PI/180) / dt
+            w_err = (-5.4 * PI/180) / dt
 
         v_hat = v + np.random.normal(-v_err, v_var)
         w_hat = w + np.random.normal(-w_err, w_var)
@@ -98,7 +121,7 @@ def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map , all_
 
         prtcl_start = [ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ]  
         prtcl_end =   [ prtcl_weight[:,0][i] + max_laser*cos(prtcl_weight[:,2][i])  , prtcl_weight[:,1][i] + max_laser*sin(prtcl_weight[:,2][i])]
-        min_distance=10
+        min_distance=5
         col = False
         for line in all_map_lines:
             intersection_point = map.find_intersection(line[0], line[1] , prtcl_start, prtcl_end)
@@ -114,7 +137,7 @@ def measurment_model (prtcl_weight , z ,laser_var = laser_var ,  map =map , all_
         d_laser = min_distance
 
 
-        prtcl_weight[:,3][i] = scipy.stats.norm(d_laser , sensor_var).pdf(z-0.01)
+        prtcl_weight[:,3][i] = scipy.stats.norm(d_laser, sensor_var).pdf(z-0.01)
     
     avg = np.mean( prtcl_weight[:,3] )
     summ = np.sum(prtcl_weight[:,3])
@@ -136,12 +159,10 @@ def col_oor_handler (prtcl_weight, polygan=polygan , x_min=x_min , x_max=x_max ,
             out = out+1
             if delete :
                 delete_list.append(i)
-
             else:
-
                 while map.check_is_collition([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ]  , polygan) or map.out_of_range([ prtcl_weight[:,0][i] , prtcl_weight[:,1][i] ],[x0 , y0],map_boundry):
                     prtcl_weight[:,0][i] = np.round(np.random.choice(x_list) + x0,2)
-                    prtcl_weight[:,1][i]  = np.round(np.random.choice(y_list)+ y0 , 2)
+                    prtcl_weight[:,1][i]  = np.round(np.random.choice(y_list) + y0 , 2)
 
     
     if delete:
@@ -160,40 +181,52 @@ def gen_prtcl(x_min=x_min , x_max=x_max , x0=x0 , y_min=y_min , y_max=y_max , y0
     prtcl_theta = (np.random.choice(rotation_list, num_prtcls)).reshape(-1,1)
     weights = (np.ones(num_prtcls)/num_prtcls).reshape(-1,1)
     prtcl_weight = np.concatenate([prtcl_x,prtcl_y,prtcl_theta , weights],axis=1)
-    return prtcl_weight 
+    return prtcl_weight
 
-def plotter(prtcl_weight , map = map , all_map_lines = all_map_lines  ):
-    plt.figure()
+def plotter(prtcl_weight, map=map, all_map_lines=all_map_lines):
+    # plt.figure()
     plt.clf()
     plt.gca().invert_yaxis()
     map.plot_map(all_map_lines)
     valid_prtcl_sz = prtcl_weight.shape[0]
-    xy_prtcl = prtcl_weight[:,:2]
-    model = DBSCAN(eps=0.03, min_samples=int(0.1*valid_prtcl_sz))
+    xy_prtcl = prtcl_weight[:, :2]
+    model = DBSCAN(eps=0.03, min_samples=int(0.1 * valid_prtcl_sz))
     yhat = model.fit_predict(xy_prtcl)
     clusters = np.unique(yhat)
-    cluster_num=[0]
+    cluster_num = [0]
     for cluster in clusters:
         row_ix = np.where(yhat == cluster)
-        if cluster!=-1:
-            cluster_num.append(len(row_ix[0])/valid_prtcl_sz)
-            if (len(row_ix[0])/valid_prtcl_sz)> 0.5:
-                print(" best estimate : " , np.mean(prtcl_weight[:,:3][row_ix] , axis=0) )
+        if cluster != -1:
+            cluster_num.append(len(row_ix[0]) / valid_prtcl_sz)
+            if (len(row_ix[0]) / valid_prtcl_sz) > 0.5:
+                print(" best estimate : ", np.mean(prtcl_weight[:, :3][row_ix], axis=0))
         plt.scatter(xy_prtcl[row_ix, 1], xy_prtcl[row_ix, 0])
 
-    valid_intsc=False
-    max_laser=0.4
-    index = np.argsort(-prtcl_weight[:,3])[:int(prtcl_weight.shape[0]*1)]
-    prtcl_weight = prtcl_weight[:,:][index]
+    valid_intsc = False
+    max_laser = 0.04
+    index = np.argsort(-prtcl_weight[:, 3])[: int(prtcl_weight.shape[0] * 1)]
+    prtcl_weight = prtcl_weight[:, :][index]
+
+    max_weight = np.max(prtcl_weight[:, 3])
+    norm_weights = prtcl_weight[:, 3] / max_weight
 
     for i in range(prtcl_weight.shape[0]):
-        plt.arrow(prtcl_weight[:,1][i] , prtcl_weight[:,0][i] , 1e-5*sin(prtcl_weight[:,2][i]) , 1e-5*cos(prtcl_weight[:,2][i]) , color='black' , head_width = 0.02, overhang = 0.6)
-    
-    #plt.draw()
-    plt.pause(0.1)
-    return max(cluster_num)*100
+        x = prtcl_weight[i, 0]
+        y = prtcl_weight[i, 1]
+        theta = prtcl_weight[i, 2]
+        weight = norm_weights[i]
         
+        # Plot particle as a blue circle
+        plt.plot(y, x, 'bo', alpha=weight)
+        
+        # Plot line indicating laser range
+        end_x = x + max_laser * cos(theta)
+        end_y = y + max_laser * sin(theta)
+        plt.plot([y, end_y], [x, end_x], 'b-', alpha=weight)
 
+    # plt.draw()
+    plt.pause(0.1)
+    return max(cluster_num) * 100
 
 
 ##### Main Program ####################

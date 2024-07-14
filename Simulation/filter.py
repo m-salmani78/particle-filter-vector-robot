@@ -202,8 +202,6 @@ def plotter(prtcl_weight, x_val, y_val, theta_val, map=map, max_laser=0.04):
     
     plt.draw()
     plt.pause(0.1)
-        
-
 
 
 ##### Main Program ####################

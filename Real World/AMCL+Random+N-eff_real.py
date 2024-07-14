@@ -163,7 +163,7 @@ def gen_prtcl(x_min=x_min , x_max=x_max , x0=x0 , y_min=y_min , y_max=y_max , y0
     return prtcl_weight 
 
 def plotter(prtcl_weight , map = map , all_map_lines = all_map_lines  ):
-    plt.figure()
+    # plt.figure()
     plt.clf()
     plt.gca().invert_yaxis()
     map.plot_map(all_map_lines)

@@ -35,7 +35,7 @@ desired_time = 5  # dt is fixed but we calculate speed
 rotation_list = [PI / 2, 3 * (PI / 2), 0, PI]
 
 home = expanduser("~")
-map_address = home + "/catkin_ws/src/rob/src/mapworld.xlsx"
+map_address = home + "/catkin_ws/src/Vector-Robot-Localization/Real World/mapworld.xlsx"
 rects, global_map_pose, map_boundry = map.init_map(map_address)
 x_min, x_max, y_min, y_max = map_boundry
 x0, y0 = float(global_map_pose[0]), float(global_map_pose[1])
@@ -120,7 +120,7 @@ def measurment_model(
             prtcl_weight[:, 0][i] + max_laser * cos(prtcl_weight[:, 2][i]),
             prtcl_weight[:, 1][i] + max_laser * sin(prtcl_weight[:, 2][i]),
         ]
-        min_distance = 10
+        min_distance = 5
         col = False
         for line in all_map_lines:
             intersection_point = map.find_intersection(
@@ -218,7 +218,7 @@ def gen_prtcl(
 
 
 def plotter(prtcl_weight, map=map, all_map_lines=all_map_lines):
-    plt.figure()
+    # plt.figure()
     plt.clf()
     plt.gca().invert_yaxis()
     map.plot_map(all_map_lines)
@@ -238,20 +238,26 @@ def plotter(prtcl_weight, map=map, all_map_lines=all_map_lines):
         plt.scatter(xy_prtcl[row_ix, 1], xy_prtcl[row_ix, 0])
 
     valid_intsc = False
-    max_laser = 0.4
+    max_laser = 0.04
     index = np.argsort(-prtcl_weight[:, 3])[: int(prtcl_weight.shape[0] * 1)]
     prtcl_weight = prtcl_weight[:, :][index]
 
+    max_weight = np.max(prtcl_weight[:, 3])
+    norm_weights = prtcl_weight[:, 3] / max_weight
+
     for i in range(prtcl_weight.shape[0]):
-        plt.arrow(
-            prtcl_weight[:, 1][i],
-            prtcl_weight[:, 0][i],
-            1e-5 * sin(prtcl_weight[:, 2][i]),
-            1e-5 * cos(prtcl_weight[:, 2][i]),
-            color="black",
-            head_width=0.02,
-            overhang=0.6,
-        )
+        x = prtcl_weight[i, 0]
+        y = prtcl_weight[i, 1]
+        theta = prtcl_weight[i, 2]
+        weight = norm_weights[i]
+        
+        # Plot particle as a blue circle
+        plt.plot(y, x, 'bo', alpha=weight)
+        
+        # Plot line indicating laser range
+        end_x = x + max_laser * cos(theta)
+        end_y = y + max_laser * sin(theta)
+        plt.plot([y, end_y], [x, end_x], 'b-', alpha=weight)
 
     # plt.draw()
     plt.pause(0.1)
@@ -289,7 +295,7 @@ def plotter(prtcl_weight, map=map, all_map_lines=all_map_lines):
 ##### Main Program ####################
 
 rospy.init_node("Particle_Filter_Localization")
-velocity_publisher = rospy.Publisher("/motors/wheels", Drive, queue_size=1000)
+velocity_publisher = rospy.Publisher("/motors/wheels", Drive, queue_size=1)
 laser_reader = rospy.Subscriber("/proximity", Proximity, callback_laser, queue_size=1)
 
 
@@ -321,8 +327,6 @@ while not rospy.is_shutdown():
 
     key = input()
 
-    print(key)
-
     if key in ["w", "s"]:
         angle = 0
         if key == "w":
@@ -337,6 +341,8 @@ while not rospy.is_shutdown():
 
         elif key == "d":
             angle = -PI / 2
+    elif key == 'q':
+        break
 
     t0 = rospy.Time.now().to_sec()
     while t0 <= 0:
