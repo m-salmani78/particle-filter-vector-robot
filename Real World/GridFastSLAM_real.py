@@ -43,7 +43,7 @@ desired_time=1 # dt is fixed but we calculate speed
 
 def callback_laser(msg):
     global laser
-    laser= msg.range
+    laser= (msg.distance)/1000
 
 
 def motion_model(prtcl_weight, v , w, dt , v_var = v_var , w_var = w_var , g_var = g_var ):
@@ -225,8 +225,6 @@ while not rospy.is_shutdown():
 
     key=input()
 
-    print(key)
-
     if key in ['w','s']:
         angle=0
         if key == 'w' :
@@ -338,6 +336,7 @@ while not rospy.is_shutdown():
         ## resample :
         N_eff = 1 / (np.sum(np.array(weights)**2))
         print("N_eff = " , N_eff)
+        print("Laser = " , laser)
         if N_eff < num_prtcls/2:
             print("Resampling... , N_eff = " , N_eff)
             index = np.random.choice( num_prtcls , num_prtcls , p=weights)
