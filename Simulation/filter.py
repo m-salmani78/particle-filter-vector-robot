@@ -343,8 +343,8 @@ while not rospy.is_shutdown():
 
         valid_prtcl_sz = X_W.shape[0]
 
-        k1=0.8
-        k2 = 0.15
+        k1=0.7
+        k2 = 0.25
         k3=0.05
         
         X_W_random = generate_prticles(num_prtcls=int(k3*num_prticles + rand_sz))
