@@ -14,12 +14,20 @@ from sklearn.cluster import DBSCAN
 
 PI = 3.1415926535897
 ## Constants and parameters :
-num_prtcls = 3000
+num_prtcls = 1000
 
-laser_var = (6.2) ** 0.5 / 1000
-v_var = 2 * (0.04834) ** 0.5 / 100
-w_var = 2 * 0.3 * (1.7283) ** 0.5 * PI / 180
-g_var = 2 * (0.01349) / 100
+
+distance_sensor_model = {
+    0: {"mean": 0.0, "std": 0.01},
+    5: {"mean": -0.0011, "std": 0.033},
+    10: {"mean": 0.0001, "std": 0.023},
+    20: {"mean": -0.0013, "std": 0.074},
+    30: {"mean": -0.0148, "std": 0.092},
+    37: {"mean": -0.0213, "std": 0.138},
+}
+translation_std = 2 * (0.02834) ** 0.5 / 100
+rotate_std = 2 * 0.3 * (1.7283) ** 0.5 * PI / 180
+g_std = 2 * (0.01349) / 100
 
 
 x = 0.0
@@ -59,9 +67,9 @@ def motion_model(
     v,
     w,
     dt,
-    v_var=v_var,
-    w_var=w_var,
-    g_var=g_var,
+    v_var=translation_std,
+    w_var=rotate_std,
+    g_var=g_std,
     map=map,
     polygan=polygan,
     x0=x0,
@@ -106,48 +114,55 @@ def motion_model(
 
 
 def measurment_model(
-    prtcl_weight, z, laser_var=laser_var, map=map, all_map_lines=all_map_lines
+    partcle_params, z, map=map, all_map_lines=all_map_lines
 ):
-    max_laser = 0.4  # 35 2
-    sensor_var = laser_var
+    max_laser = 0.4
 
-    for i in range(prtcl_weight.shape[0]):
-
-        laser_available = False
-
-        prtcl_start = [prtcl_weight[:, 0][i], prtcl_weight[:, 1][i]]
+    for i in range(partcle_params.shape[0]):
+        prtcl_start = [partcle_params[:, 0][i], partcle_params[:, 1][i]]
         prtcl_end = [
-            prtcl_weight[:, 0][i] + max_laser * cos(prtcl_weight[:, 2][i]),
-            prtcl_weight[:, 1][i] + max_laser * sin(prtcl_weight[:, 2][i]),
+            partcle_params[:, 0][i] + max_laser * cos(partcle_params[:, 2][i]),
+            partcle_params[:, 1][i] + max_laser * sin(partcle_params[:, 2][i]),
         ]
-        min_distance = 5
+        min_distance = 0.05
         col = False
+
         for line in all_map_lines:
             intersection_point = map.find_intersection(
                 line[0], line[1], prtcl_start, prtcl_end
             )
             if intersection_point != False:
                 d_laser = (
-                    (intersection_point[0] - prtcl_weight[:, 0][i]) ** 2
-                    + (intersection_point[1] - prtcl_weight[:, 1][i]) ** 2
+                    (intersection_point[0] - partcle_params[:, 0][i]) ** 2
+                    + (intersection_point[1] - partcle_params[:, 1][i]) ** 2
                 ) ** 0.5
+                col=True
                 if min_distance >= d_laser:
-                    min_distance = d_laser
-                    col = intersection_point
+                    d_laser = min_distance
+                    # col = intersection_point
+                
 
         if col == False:
-            min_distance = max_laser
+            d_laser = max_laser
 
-        d_laser = min_distance
+        z_type=5
+        if z < 0.07:
+            z_type = 5
+        elif z > 0.34:
+            z_type = 37
+        else:
+            z_type = round(z*10) * 10
 
-        prtcl_weight[:, 3][i] = scipy.stats.norm(d_laser, sensor_var).pdf(z - 0.01)
+        laser_nois = distance_sensor_model[z_type]
+        print(f'z={z}, z type={z_type}, d_laser={d_laser}')
+        partcle_params[:, 3][i] = scipy.stats.norm(z + laser_nois["mean"], laser_nois["std"]).pdf(d_laser)
 
-    avg = np.mean(prtcl_weight[:, 3])
-    summ = np.sum(prtcl_weight[:, 3])
-    prtcl_weight[:, 3] = prtcl_weight[:, 3] / summ
-    sum2 = np.sum(prtcl_weight[:, 3] ** 2)
+    avg = np.mean(partcle_params[:, 3])
+    summ = np.sum(partcle_params[:, 3])
+    partcle_params[:, 3] = partcle_params[:, 3] / summ
+    sum2 = np.sum(partcle_params[:, 3] ** 2)
 
-    return prtcl_weight, avg, sum2
+    return partcle_params, avg, sum2
 
 
 def col_oor_handler(
@@ -313,9 +328,9 @@ list_portion = []
 
 alpha_slow = 0.3
 alpha_fast = 0.7
-w_slow = 0
-w_fast = 0
-w_avg = 0
+w_slow = 1e-10
+w_fast = 1e-10
+w_avg = 1e-10
 portion = 0
 g = 0
 while not rospy.is_shutdown():
@@ -406,8 +421,9 @@ while not rospy.is_shutdown():
             + " ,w_fast : "
             + str(w_fast)
         )
+        print(f'w_slow {w_slow}, w_fast {w_fast}, num_prtcls: {num_prtcls}')
         rand_sz = int((np.max([0, 1 - (w_fast / w_slow)])) * num_prtcls)
-        rand_sz = np.min([int(0.1 * num_prtcls), rand_sz])
+        rand_sz = np.min([int(0.01 * num_prtcls), rand_sz])
 
         print("random size : ", rand_sz)
 
