@@ -30,7 +30,7 @@ PI = 3.1415926535897
 laser_data=0
 laser=0
 
-desired_time=3 # dt is fixed but we calculate speed
+desired_time=3
 
 rotation_list = [ PI/2 , 3*(PI/2) , 0 , PI ]
 
@@ -40,20 +40,11 @@ map = Map(map_address)
 x_min , x_max , y_min , y_max = map.map_boundry
 
 # Noises
-sensor_model_noise = {
-    0: {"mean": 0.0, "std": 0.001},
-    5: {"mean": 0.004736, "std": 0.035173},
-    10: {"mean": 0.006546, "std": 0.022644},
-    20: {"mean": 0.011082, "std": 0.040112},
-    30: {"mean": 0.012548, "std": 0.093023},
-    37: {"mean": 0.000918, "std": 0.188409},
-}
-
 translation_model_params = {
     0: {"mean": 0.0, "std": 0.0, "dt":0.0},
-    5: {"mean": -0.008467, "std": 0.000806713, "dt":0.1},
-    10: {"mean": -0.009100, "std": 0.000571276, "dt":0.2},
-    15: {"mean": -0.008634, "std": 0.000658264, "dt":0.3},
+    5: {"mean": -0.0084, "std": 0.004, "dt":0.1},
+    10: {"mean": -0.0091, "std": 0.004, "dt":0.2},
+    15: {"mean": -0.0086, "std": 0.004, "dt":0.3},
 }
 
 rotation_model_params = {

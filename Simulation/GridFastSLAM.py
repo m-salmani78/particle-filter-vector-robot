@@ -205,7 +205,6 @@ def gen_prtcl( num_prtcls = num_prtcls ):
 
 
 ##### Main Program ####################
-
 rospy.init_node("Particle_Filter_Localization")
 Odometry_reader= rospy.Subscriber("/odom", Odometry, new_odometry)
 velocity_publisher = rospy.Publisher('/vector/cmd_vel', Twist, queue_size=1)
@@ -242,12 +241,14 @@ while not rospy.is_shutdown():
             dist = -0.05
 
     
-    elif key in ['a' , 'd' ]:
+    elif key in ['a' , 'd']:
         dist=0
         if key=='a':
             angle= PI/6 
         elif key == 'd' :
             angle = -PI/6
+    elif key == 'q':
+        break
 
 
 
@@ -267,7 +268,7 @@ while not rospy.is_shutdown():
     while(dt<desired_time):
         if (laser_reading>0.04) :
             vel_msg.linear.x = velocity_x
-            vel_msg.angular.z=velocity_z *2 ## double velocity due to the simulation bug
+            vel_msg.angular.z=velocity_z *2
             velocity_publisher.publish(vel_msg)
             t1=rospy.Time.now().to_sec()
             dt=t1-t0
@@ -320,26 +321,16 @@ while not rospy.is_shutdown():
         www = best_prtcl[3]
         mmm = best_prtcl[4]
         trajectory = best_prtcl[5]
-        #print( " robot trajectory : " , trajectory)
-        #print(mmm)
-        #print(np.max(mmm) , np.min(mmm))
-        #print(www)
-
-        #plt.imshow(mmm>0.6,vmin=0, vmax=1)
-        #plt.pause(0.1)
         plt.clf()
         plt.gca().invert_yaxis()
-        #print(trajectory.shape[0])
         for i in range(trajectory.shape[0]):
             traj = trajectory[i]
             xx = traj[0]
             yy = traj[1]
             tt = traj[2]
-            plt.arrow(yy , xx , 1e-5*sin(tt) , 1e-5*cos(tt) , color='black' , head_width = 0.02, overhang = 0.6)
+            plt.arrow(yy , xx , 1e-5*sin(tt) , 1e-5*cos(tt) , color='black' , head_width = 0.02, overhang = 0.6, alpha=0.5)
         plt.draw()
-        #print(mmm.shape)
         map_ind = np.where(mmm>0.6)
-        #print(map_ind)
         if len(map_ind[0]) >0:
             for i in range(len(map_ind[0])) :
                 xx , yy = map_ind[0][i]* grid_size , map_ind[1][i]* grid_size
